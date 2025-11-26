@@ -1,0 +1,13 @@
+[
+  {
+    "name": "home-page",
+    "url": "http://example.com",
+    "maxClicks": 20,
+    "viewportSets": [
+      { "width": 1440, "height": 900, "label": "desktop" },
+      { "width": 768, "height": 1024, "label": "tablet" },
+      { "width": 390, "height": 844, "label": "mobile" },
+	  { "width": 320, "height": 568, "label": "mobile-small" }
+    ]
+  }
+]

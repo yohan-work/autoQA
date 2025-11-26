@@ -1,0 +1,21 @@
+{
+  "name": "qa-bot",
+  "version": "1.0.0",
+  "description": "Playwright 기반 QA 스모크 테스트 자동화 도구",
+  "main": "src/runSmoke.js",
+  "scripts": {
+    "test:install": "npx playwright install chromium",
+    "test:run": "node src/runSmoke.js"
+  },
+  "keywords": [
+    "qa",
+    "automation",
+    "playwright",
+    "testing"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.40.0"
+  }
+}

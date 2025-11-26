@@ -1,0 +1,7 @@
+qa-bot/node_modules
+qa-bot/artifacts
+qa-bot/reports
+qa-bot/src/.DS_Store
+qa-bot/.DS_Store
+qa_results/.DS_Store
+.DS_Store
