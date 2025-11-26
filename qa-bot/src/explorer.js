@@ -48,7 +48,7 @@ async function explorePage(page, { target, screenshotsDir }) {
 
       // 1. 뷰포트 크기 변경
       await page.setViewportSize({ width, height });
-      await wait(100); // 렌더링 대기 (최적화: 500ms → 100ms)
+      await wait(50); // 렌더링 대기 (최적화: 500ms → 100ms → 50ms)
 
       steps.push({ type: "viewport", width, height, label });
 
@@ -70,9 +70,9 @@ async function explorePage(page, { target, screenshotsDir }) {
       );
       await safeScreenshot(page, afterScrollScreenshot, errors);
 
-      // 5. 입력 필드에 타이핑
-      const typeSteps = await typeIntoInputs(page);
-      steps.push(...typeSteps);
+      // 5. 입력 필드에 타이핑 (성능 최적화를 위해 제거)
+      // const typeSteps = await typeIntoInputs(page);
+      // steps.push(...typeSteps);
 
       // 6. 버튼/링크 클릭
       const clickSteps = await clickButtons(page, maxClicks);
@@ -89,7 +89,7 @@ async function explorePage(page, { target, screenshotsDir }) {
 
 /**
  * 페이지를 단계적으로 스크롤합니다.
- * 페이지를 4개 구간으로 나누어 빠르게 이동하며 각 위치를 기록합니다. (최적화)
+ * 페이지를 2개 구간으로 나누어 빠르게 이동하며 각 위치를 기록합니다. (최적화)
  *
  * @param {import('playwright').Page} page - Playwright 페이지 객체
  * @returns {Promise<Array>} 스크롤 스텝 배열
@@ -101,22 +101,22 @@ async function scrollPage(page) {
     // 전체 스크롤 높이 가져오기
     const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
 
-    // 페이지를 4개 구간으로 나눔 (최적화: 0%, 33%, 66%, 100%)
-    const positions = [0, 0.33, 0.66, 1.0];
+    // 페이지를 2개 구간으로 나눔 (최적화: 0%, 100%)
+    const positions = [0, 1.0];
 
     for (const posRatio of positions) {
       const scrollPos = Math.floor(scrollHeight * posRatio);
 
       // 스크롤 실행
       await page.evaluate((pos) => window.scrollTo(0, pos), scrollPos);
-      await wait(100); // 최적화: 300ms → 100ms
+      await wait(50); // 최적화: 300ms → 100ms → 50ms
 
       steps.push({ type: "scroll", position: scrollPos });
     }
 
     // 다시 맨 위로
     await page.evaluate(() => window.scrollTo(0, 0));
-    await wait(100); // 최적화: 300ms → 100ms
+    await wait(50); // 최적화: 300ms → 100ms → 50ms
   } catch (error) {
     steps.push({ type: "scroll-error", error: error.message });
   }
@@ -251,15 +251,15 @@ async function clickButtons(page, maxClicks = 20) {
 
         // 스크롤하여 요소가 보이도록
         await element.scrollIntoViewIfNeeded();
-        await wait(50); // 최적화: 200ms → 50ms
+        await wait(20); // 최적화: 200ms → 50ms → 20ms
 
         // 클릭 실행
         await element.click();
-        await wait(200); // 최적화: 1000ms → 200ms (팝업 렌더링 대기)
+        await wait(100); // 최적화: 1000ms → 200ms → 100ms (팝업 렌더링 대기)
 
         // 팝업/모달 자동 닫기: ESC 키 시도
         await page.keyboard.press("Escape");
-        await wait(100);
+        await wait(50); // 최적화: 100ms → 50ms
 
         steps.push({ type: "click", index: i, tagName, text });
         clickCount++;
