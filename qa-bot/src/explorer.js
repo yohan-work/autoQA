@@ -88,8 +88,8 @@ async function explorePage(page, { target, screenshotsDir }) {
 }
 
 /**
- * 페이지를 단계적으로 스크롤합니다.
- * 페이지를 2개 구간으로 나누어 빠르게 이동하며 각 위치를 기록합니다. (최적화)
+ * 페이지를 자연스럽게 스크롤합니다.
+ * smooth scroll behavior를 사용하여 부드럽게 이동합니다.
  *
  * @param {import('playwright').Page} page - Playwright 페이지 객체
  * @returns {Promise<Array>} 스크롤 스텝 배열
@@ -100,23 +100,41 @@ async function scrollPage(page) {
   try {
     // 전체 스크롤 높이 가져오기
     const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
+    const scrollSteps = 20; // 20단계로 부드럽게 스크롤
 
-    // 페이지를 2개 구간으로 나눔 (최적화: 0%, 100%)
-    const positions = [0, 1.0];
+    // 1. 위에서 아래로 smooth 스크롤
+    for (let i = 0; i <= scrollSteps; i++) {
+      const position = Math.floor((scrollHeight / scrollSteps) * i);
+      await page.evaluate((pos) => {
+        window.scrollTo({
+          top: pos,
+          behavior: "smooth",
+        });
+      }, position);
+      await wait(100); // smooth 스크롤이 완료될 시간
 
-    for (const posRatio of positions) {
-      const scrollPos = Math.floor(scrollHeight * posRatio);
-
-      // 스크롤 실행
-      await page.evaluate((pos) => window.scrollTo(0, pos), scrollPos);
-      await wait(50); // 최적화: 300ms → 100ms → 50ms
-
-      steps.push({ type: "scroll", position: scrollPos });
+      steps.push({ type: "scroll-down", position });
     }
 
-    // 다시 맨 위로
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await wait(50); // 최적화: 300ms → 100ms → 50ms
+    // 하단에서 잠시 대기
+    await wait(300);
+
+    // 2. 아래에서 위로 smooth 스크롤
+    for (let i = scrollSteps; i >= 0; i--) {
+      const position = Math.floor((scrollHeight / scrollSteps) * i);
+      await page.evaluate((pos) => {
+        window.scrollTo({
+          top: pos,
+          behavior: "smooth",
+        });
+      }, position);
+      await wait(100); // smooth 스크롤이 완료될 시간
+
+      steps.push({ type: "scroll-up", position });
+    }
+
+    // 최종적으로 맨 위에 위치
+    await wait(100);
   } catch (error) {
     steps.push({ type: "scroll-error", error: error.message });
   }
@@ -251,15 +269,15 @@ async function clickButtons(page, maxClicks = 20) {
 
         // 스크롤하여 요소가 보이도록
         await element.scrollIntoViewIfNeeded();
-        await wait(20); // 최적화: 200ms → 50ms → 20ms
+        await wait(20);
 
         // 클릭 실행
         await element.click();
-        await wait(100); // 최적화: 1000ms → 200ms → 100ms (팝업 렌더링 대기)
+        await wait(100); // 팝업 렌더링 대기
 
-        // 팝업/모달 자동 닫기: ESC 키 시도
+        // 팝업/모달 자동 닫기: ESC 키만 (빠르게)
         await page.keyboard.press("Escape");
-        await wait(50); // 최적화: 100ms → 50ms
+        await wait(50);
 
         steps.push({ type: "click", index: i, tagName, text });
         clickCount++;
@@ -279,8 +297,20 @@ async function clickButtons(page, maxClicks = 20) {
 }
 
 /**
+ * 열려있는 팝업/모달을 닫습니다.
+ * ESC 키를 사용하여 빠르게 닫습니다. (timeout 없이 즉시 실행)
+ *
+ * @param {import('playwright').Page} page - Playwright 페이지 객체
+ */
+async function closePopupIfOpen(page) {
+  // ESC 키만 사용 - 가장 빠르고 효과적
+  await page.keyboard.press("Escape");
+  await wait(50);
+}
+
+/**
  * 안전하게 스크린샷을 촬영합니다.
- * 실패 시 에러 배열에 추가합니다.
+ * 전체 페이지를 캡처하며, 실패 시 에러 배열에 추가합니다.
  *
  * @param {import('playwright').Page} page - Playwright 페이지 객체
  * @param {string} filepath - 저장 경로
@@ -288,7 +318,10 @@ async function clickButtons(page, maxClicks = 20) {
  */
 async function safeScreenshot(page, filepath, errors) {
   try {
-    await page.screenshot({ path: filepath });
+    await page.screenshot({
+      path: filepath,
+      fullPage: true, // 전체 페이지 캡처 (스크롤 가능한 전체 영역)
+    });
   } catch (error) {
     errors.push(`스크린샷 실패 (${filepath}): ${error.message}`);
   }

@@ -145,9 +145,9 @@ async function runSmoke() {
       });
       console.log(`  [OK] 페이지 로드 완료`);
 
-      // 초기 스크린샷 촬영
+      // 초기 스크린샷 촬영 (전체 페이지)
       const initialScreenshot = path.join(targetScreenshotsDir, "initial.png");
-      await page.screenshot({ path: initialScreenshot });
+      await page.screenshot({ path: initialScreenshot, fullPage: true });
       console.log(`  [OK] 초기 스크린샷 저장: initial.png`);
 
       // 탐색(exploration) 수행
@@ -165,10 +165,10 @@ async function runSmoke() {
       console.log(`  [ERROR] ${error.message}`);
       result.navigationError = error.message;
 
-      // 에러 발생 시 스크린샷 시도
+      // 에러 발생 시 스크린샷 시도 (전체 페이지)
       try {
         const errorScreenshot = path.join(targetScreenshotsDir, "error.png");
-        await page.screenshot({ path: errorScreenshot });
+        await page.screenshot({ path: errorScreenshot, fullPage: true });
       } catch (screenshotError) {
         console.log(`  [WARN] 에러 스크린샷 실패: ${screenshotError.message}`);
       }
