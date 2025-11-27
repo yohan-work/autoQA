@@ -39,8 +39,7 @@ async function explorePage(page, { target, screenshotsDir }) {
       const { width, height, label } = viewport;
 
       console.log(
-        `    [뷰포트 ${i + 1}/${
-          viewportSets.length
+        `    [뷰포트 ${i + 1}/${viewportSets.length
         }] ${label} (${width}x${height})`
       );
 
@@ -87,12 +86,12 @@ async function explorePage(page, { target, screenshotsDir }) {
  */
 async function performPhasedScrollAndInteract(page, maxClicks) {
   const steps = [];
-  
+
   try {
     // === Phase 1: 단순 스크롤 다운 ===
     console.log("    [Phase 1] 페이지 로딩을 위한 스크롤 다운...");
     await smoothScrollDown(page, { speed: 'slow' });
-    
+
     // 최상단으로 이동
     await page.evaluate(() => window.scrollTo(0, 0));
     await wait(500);
@@ -102,7 +101,7 @@ async function performPhasedScrollAndInteract(page, maxClicks) {
     console.log("    [Phase 2] 상호작용 스크롤 시작...");
     const interactSteps = await interactiveScrollDown(page, maxClicks);
     steps.push(...interactSteps);
-    
+
   } catch (error) {
     steps.push({ type: "error", message: error.message });
     console.error(`    [ERROR] Phase 실행 중 오류: ${error.message}`);
@@ -120,7 +119,7 @@ async function performPhasedScrollAndInteract(page, maxClicks) {
 async function smoothScrollDown(page, { speed = 'normal' } = {}) {
   const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
   const viewportHeight = await page.evaluate(() => window.innerHeight);
-  
+
   let currentPosition = 0;
   const stepSize = viewportHeight / 2; // 뷰포트 절반씩 이동
   const delay = speed === 'slow' ? 200 : 100;
@@ -133,16 +132,16 @@ async function smoothScrollDown(page, { speed = 'normal' } = {}) {
         behavior: 'smooth'
       });
     }, currentPosition);
-    
+
     // 페이지 높이가 동적으로 변할 수 있으므로 갱신
     const newScrollHeight = await page.evaluate(() => document.body.scrollHeight);
     if (newScrollHeight > scrollHeight) {
       // 무한 스크롤 등 대응 로직이 필요할 수 있으나 여기서는 간단히 처리
     }
-    
+
     await wait(delay);
   }
-  
+
   // 확실하게 끝까지
   await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }));
   await wait(500);
@@ -157,19 +156,19 @@ async function interactiveScrollDown(page, maxClicks) {
   const steps = [];
   let clickCount = 0;
   let inputCount = 0;
-  
+
   const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
   const viewportHeight = await page.evaluate(() => window.innerHeight);
-  
+
   let currentPosition = 0;
   const stepSize = viewportHeight * 0.8; // 뷰포트의 80%씩 이동하여 놓치는 요소 최소화
 
   // 이미 상호작용한 요소들을 추적하기 위한 Set (selector나 위치 기반)
   // 하지만 DOM이 변하므로 간단히 현재 뷰포트 내 요소만 처리
-  
+
   while (currentPosition < scrollHeight) {
     // 1. 현재 뷰포트에서 상호작용 수행
-    
+
     // 1-1. Input 요소 처리
     if (inputCount < 5) { // 최대 5개까지만 입력 테스트
       const inputSteps = await processVisibleInputs(page, inputCount);
@@ -192,14 +191,14 @@ async function interactiveScrollDown(page, maxClicks) {
         behavior: 'smooth'
       });
     }, currentPosition);
-    
+
     await wait(300); // 스크롤 후 렌더링 및 안정화 대기
-    
+
     // 페이지 높이 갱신 확인
     const newHeight = await page.evaluate(() => document.body.scrollHeight);
     if (currentPosition >= newHeight) break;
   }
-  
+
   return steps;
 }
 
@@ -207,7 +206,7 @@ async function processVisibleInputs(page, startIndex) {
   const steps = [];
   // 현재 뷰포트에 보이는 input만 선택
   const inputs = await page.locator('input:visible, textarea:visible').all();
-  
+
   for (const input of inputs) {
     try {
       // 이미 값이 있는지 확인 (간단한 체크)
@@ -219,14 +218,14 @@ async function processVisibleInputs(page, startIndex) {
       // 뷰포트 내 존재 여부는 scrollIntoViewIfNeeded가 처리해주지만,
       // 우리는 스크롤하면서 지나가는 중이므로 현재 보이는 것만 건드리는게 좋음.
       // 여기서는 간단히 try-catch로 진행
-      
+
       const type = await input.getAttribute('type') || 'text';
       if (['hidden', 'submit', 'button', 'image', 'checkbox', 'radio'].includes(type)) continue;
 
       await input.click({ timeout: 1000 });
       await input.fill('QA Test');
       steps.push({ type: 'input', inputType: type });
-      
+
       // 하나 처리하고 잠시 대기
       await wait(50);
     } catch (e) {
@@ -239,26 +238,26 @@ async function processVisibleInputs(page, startIndex) {
 async function processVisibleClickables(page, remainingClicks) {
   const steps = [];
   let clicked = 0;
-  
+
   // 현재 뷰포트에 보이는 클릭 가능한 요소들
   // 버튼, 링크, role=button
   const selector = 'button:visible, a[href]:visible, [role="button"]:visible';
   const elements = await page.locator(selector).all();
-  
+
   for (const element of elements) {
     if (clicked >= remainingClicks) break;
-    
+
     try {
       const text = (await element.innerText()).trim();
       if (!text) continue;
-      
+
       // 위험한 텍스트 체크
       if (DANGEROUS_PATTERNS.some(p => text.toLowerCase().includes(p))) continue;
-      
+
       // 화면 내에 있는지 대략적 확인 (BoundingBox)
       const box = await element.boundingBox();
       if (!box) continue;
-      
+
       // 뷰포트 내에 있는지 확인 (스크롤 위치 고려 안해도 boundingBox는 뷰포트 기준? 아님 페이지 기준? 
       // Playwright boundingBox는 페이지 기준.
       // 하지만 우리는 interactiveScrollDown에서 스크롤을 제어하고 있음.
@@ -266,21 +265,73 @@ async function processVisibleClickables(page, remainingClicks) {
       // 여기서는 "보이는 것"을 클릭하는게 목표이므로 force: true를 쓰거나
       // 현재 스크롤 위치와 비교해야 함. 
       // 복잡도를 줄이기 위해 그냥 시도.
-      
+
       await element.click({ timeout: 1000 });
       clicked++;
       steps.push({ type: 'click', text: text.substring(0, 20) });
-      
-      // 팝업 닫기 시도
-      await page.keyboard.press('Escape');
-      await wait(100);
-      
+
+      // 팝업 처리 (닫기 버튼 찾기 -> 없으면 ESC)
+      await handlePotentialPopup(page);
+
     } catch (e) {
       // 클릭 실패는 무시 (가려져 있거나 등등)
     }
   }
-  
+
   return steps;
+}
+
+/**
+ * 팝업이 떴을 가능성이 있을 때 처리합니다.
+ * 1. 명시적인 닫기 버튼(X, 닫기 등)을 찾아 클릭 시도
+ * 2. 실패 시 ESC 키 입력
+ * 
+ * @param {import('playwright').Page} page 
+ */
+async function handlePotentialPopup(page) {
+  // 팝업 렌더링 대기
+  await wait(300);
+
+  // 닫기 버튼으로 추정되는 셀렉터들
+  const closeSelectors = [
+    'button[aria-label="Close"]',
+    'button[aria-label="닫기"]',
+    'button[aria-label="close"]',
+    '.close',
+    '.btn-close',
+    '.popup-close',
+    '.modal-close',
+    '[class*="close"]', // 클래스명에 close가 포함된 요소 (조심해서 사용)
+    'button:has-text("닫기")',
+    'button:has-text("Close")',
+    'button:has-text("취소")',
+    'button:has-text("X")',
+  ];
+
+  try {
+    // 1. 명시적인 닫기 버튼 찾기
+    // 현재 뷰포트 내에 있고, visible한 닫기 버튼을 찾음
+    // 여러 개가 있을 수 있으므로 가장 위에 있거나(z-index) 가장 마지막에 렌더링된 것을 찾는게 좋지만,
+    // Playwright의 locator는 기본적으로 strict 모드이므로 .first() 등을 사용해야 함.
+
+    for (const selector of closeSelectors) {
+      const closeBtn = page.locator(`${selector}:visible`).first();
+
+      if (await closeBtn.count() > 0) {
+        console.log(`    [Popup] 닫기 버튼 발견: ${selector}`);
+        await closeBtn.click({ timeout: 1000 });
+        await wait(200); // 닫힘 대기
+        return; // 성공적으로 닫았으면 종료
+      }
+    }
+  } catch (e) {
+    // 닫기 버튼 클릭 실패 시 무시하고 ESC 시도
+    console.log(`    [Popup] 닫기 버튼 클릭 실패: ${e.message}`);
+  }
+
+  // 2. Fallback: ESC 키
+  await page.keyboard.press('Escape');
+  await wait(100);
 }
 
 /**
