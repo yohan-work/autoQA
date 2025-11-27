@@ -328,8 +328,50 @@ async function interactiveScrollDown(page, maxClicks) {
   let clickCount = 0;
   let inputCount = 0;
 
-  const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
-  const viewportHeight = await page.evaluate(() => window.innerHeight);
+  // 1. 스크롤 대상 및 정보 확인
+  const scrollInfo = await page.evaluate(() => {
+    const totalHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+    const maxScroll = totalHeight - window.innerHeight;
+
+    if (maxScroll > 0) {
+      return { mode: 'window', scrollHeight: totalHeight, viewportHeight: window.innerHeight };
+    }
+
+    // Window 스크롤 불가 시 컨테이너 탐색
+    const allElements = document.querySelectorAll('*');
+    let maxScrollable = null;
+    let maxScrollHeight = 0;
+
+    for (const el of allElements) {
+      const style = window.getComputedStyle(el);
+      if (['scroll', 'auto'].includes(style.overflowY)) {
+        if (el.scrollHeight > el.clientHeight) {
+          if (el.scrollHeight > maxScrollHeight) {
+            maxScrollHeight = el.scrollHeight;
+            maxScrollable = el;
+          }
+        }
+      }
+    }
+
+    if (maxScrollable) {
+      // 식별을 위해 임시 클래스 추가 (이미 있으면 유지)
+      if (!maxScrollable.classList.contains('qa-scroll-target')) {
+        maxScrollable.classList.add('qa-scroll-target');
+      }
+      return {
+        mode: 'container',
+        selector: '.qa-scroll-target',
+        scrollHeight: maxScrollable.scrollHeight,
+        viewportHeight: maxScrollable.clientHeight
+      };
+    }
+
+    // Fallback
+    return { mode: 'window', scrollHeight: totalHeight, viewportHeight: window.innerHeight };
+  });
+
+  console.log(`[Interactive] Scroll Mode: ${scrollInfo.mode} (Height: ${scrollInfo.scrollHeight})`);
 
   let currentPosition = 0;
   // 인터랙션 단계는 50px 단위로 이동 (10px보다는 빠르지만 촘촘하게)
@@ -338,7 +380,7 @@ async function interactiveScrollDown(page, maxClicks) {
   // 이미 상호작용한 요소들을 추적하기 위한 Set (selector나 위치 기반)
   // 하지만 DOM이 변하므로 간단히 현재 뷰포트 내 요소만 처리
 
-  while (currentPosition < scrollHeight) {
+  while (currentPosition < scrollInfo.scrollHeight) {
     // 1. 현재 뷰포트에서 상호작용 수행
 
     // 1-1. Input 요소 처리
@@ -361,16 +403,26 @@ async function interactiveScrollDown(page, maxClicks) {
 
     // 2. 스크롤 이동 (smooth 제거하여 즉시 이동)
     currentPosition += stepSize;
-    await page.evaluate((pos) => {
-      window.scrollTo(0, pos); // smooth 제거
-    }, currentPosition);
+
+    await page.evaluate(({ mode, selector, pos }) => {
+      if (mode === 'container') {
+        const el = document.querySelector(selector);
+        if (el) el.scrollTo(0, pos);
+      } else {
+        window.scrollTo(0, pos);
+      }
+    }, { mode: scrollInfo.mode, selector: scrollInfo.selector, pos: currentPosition });
 
     // 스크롤이 잦아졌으므로 대기 시간은 짧게
     await wait(100);
+  }
 
-    // 페이지 높이 갱신 확인
-    const newHeight = await page.evaluate(() => document.body.scrollHeight);
-    if (currentPosition >= newHeight) break;
+  // Clean up temp class
+  if (scrollInfo.mode === 'container') {
+    await page.evaluate((selector) => {
+      const el = document.querySelector(selector);
+      if (el) el.classList.remove('qa-scroll-target');
+    }, scrollInfo.selector);
   }
 
   return steps;
