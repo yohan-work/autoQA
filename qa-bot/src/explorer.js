@@ -38,6 +38,9 @@ async function explorePage(page, { target, screenshotsDir }) {
       const viewport = viewportSets[i];
       const { width, height, label } = viewport;
 
+      // 브라우저 로그 출력
+      page.on('console', msg => console.log(`[Browser Console] ${msg.text()}`));
+
       console.log(
         `    [뷰포트 ${i + 1}/${viewportSets.length
         }] ${label} (${width}x${height})`
@@ -92,8 +95,9 @@ async function performPhasedScrollAndInteract(page, maxClicks) {
     console.log("    [Phase 1] 페이지 로딩을 위한 스크롤 다운...");
     await smoothScrollDown(page, { speed: 'slow' });
 
-    // 최상단으로 이동
-    await page.evaluate(() => window.scrollTo(0, 0));
+    // 천천히 최상단으로 이동 (Phase 1 종료)
+    console.log("    [Phase 1] 최상단으로 복귀...");
+    await smoothScrollUp(page, { speed: 'slow' });
     await wait(500);
     steps.push({ type: "phase-1-complete" });
 
@@ -111,39 +115,162 @@ async function performPhasedScrollAndInteract(page, maxClicks) {
 }
 
 /**
- * 부드럽게 페이지 끝까지 스크롤합니다.
+ * 부드럽게 페이지 끝까지 스크롤합니다. (브라우저 내부 실행)
+ * 10px 단위로 아주 부드럽게 이동합니다.
  * @param {import('playwright').Page} page 
  * @param {Object} options
  * @param {string} options.speed - 'slow' | 'normal' | 'fast'
  */
 async function smoothScrollDown(page, { speed = 'normal' } = {}) {
-  const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
-  const viewportHeight = await page.evaluate(() => window.innerHeight);
+  // 브라우저 컨텍스트에서 스크롤 실행
+  await page.evaluate(async ({ speed }) => {
+    console.log('[Browser] Starting smoothScrollDown...');
+    const scrollStep = 10; // 10px 단위
+    const delayTime = speed === 'slow' ? 50 : 30; // 50ms or 30ms delay
 
-  let currentPosition = 0;
-  const stepSize = viewportHeight / 2; // 뷰포트 절반씩 이동
-  const delay = speed === 'slow' ? 200 : 100;
+    const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
-  while (currentPosition < scrollHeight) {
-    currentPosition += stepSize;
-    await page.evaluate((pos) => {
-      window.scrollTo({
-        top: pos,
-        behavior: 'smooth'
-      });
-    }, currentPosition);
+    let lastScrollY = -1;
+    let sameScrollCount = 0;
+    const maxSameScroll = 20; // 약 1~2초간 변화 없으면 멈춤
 
-    // 페이지 높이가 동적으로 변할 수 있으므로 갱신
-    const newScrollHeight = await page.evaluate(() => document.body.scrollHeight);
-    if (newScrollHeight > scrollHeight) {
-      // 무한 스크롤 등 대응 로직이 필요할 수 있으나 여기서는 간단히 처리
+    while (true) {
+      const currentScroll = window.scrollY;
+      // document.body.scrollHeight 대신 document.documentElement.scrollHeight 사용 (더 안전)
+      const totalHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+      const maxScroll = totalHeight - window.innerHeight;
+
+      console.log(`[Browser] Scroll: ${currentScroll} / ${maxScroll} (Total: ${totalHeight})`);
+
+      // 만약 maxScroll이 0이라면, body가 아닌 내부 요소가 스크롤 영역일 수 있음
+      if (maxScroll <= 0 && currentScroll === 0) {
+        console.log('[Browser] Window not scrollable. Searching for scrollable container...');
+        // 스크롤 가능한 가장 큰 요소 찾기
+        const allElements = document.querySelectorAll('*');
+        let maxScrollable = null;
+        let maxScrollHeight = 0;
+
+        for (const el of allElements) {
+          const style = window.getComputedStyle(el);
+          if (['scroll', 'auto'].includes(style.overflowY)) {
+            if (el.scrollHeight > el.clientHeight) {
+              if (el.scrollHeight > maxScrollHeight) {
+                maxScrollHeight = el.scrollHeight;
+                maxScrollable = el;
+              }
+            }
+          }
+        }
+
+        if (maxScrollable) {
+          console.log(`[Browser] Found scrollable container: ${maxScrollable.tagName} .${maxScrollable.className}`);
+          // 해당 요소 스크롤 로직으로 전환 (여기서는 간단히 해당 요소를 끝까지 스크롤하는 루프로 변경)
+          // 하지만 구조상 복잡해지므로, 일단 window 스크롤 시도 후 안되면 이 요소를 스크롤하도록 함
+
+          const elementMaxScroll = maxScrollable.scrollHeight - maxScrollable.clientHeight;
+          let elementCurrent = maxScrollable.scrollTop;
+
+          while (elementCurrent < elementMaxScroll) {
+            maxScrollable.scrollBy(0, scrollStep);
+            await delay(delayTime);
+            elementCurrent = maxScrollable.scrollTop;
+
+            // 멈춤 감지 (요소)
+            if (maxScrollable.scrollTop === elementCurrent && elementCurrent < elementMaxScroll) {
+              // Stuck?
+            }
+          }
+          console.log('[Browser] Container scroll finished.');
+          break; // 메인 루프 종료
+        } else {
+          console.log('[Browser] No scrollable container found. Trying forced window scroll...');
+        }
+      }
+
+      // 끝에 도달했는지 확인
+      if (currentScroll >= maxScroll && maxScroll > 0) {
+        console.log('[Browser] Reached bottom. Waiting to check for dynamic content...');
+        // 혹시 모르니 조금 더 기다려봄 (동적 로딩)
+        await delay(500);
+        const newTotal = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+        const newMax = newTotal - window.innerHeight;
+        if (currentScroll >= newMax) {
+          console.log('[Browser] Confirmed bottom. Exiting.');
+          break;
+        }
+        console.log('[Browser] New content detected. Continuing...');
+      }
+
+      // 스크롤 실행
+      window.scrollBy(0, scrollStep);
+      await delay(delayTime);
+
+      // 멈춤 감지
+      if (window.scrollY === lastScrollY && maxScroll > 0) { // maxScroll > 0 일 때만 멈춤 감지
+        sameScrollCount++;
+        if (sameScrollCount > maxSameScroll) {
+          console.log('[Browser] Stuck detected (no scroll change). Exiting.');
+          break;
+        }
+      } else {
+        sameScrollCount = 0;
+      }
+      lastScrollY = window.scrollY;
     }
+  }, { speed });
 
-    await wait(delay);
-  }
+  await wait(500);
+}
 
-  // 확실하게 끝까지
-  await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }));
+/**
+ * 부드럽게 페이지 맨 위로 스크롤합니다. (브라우저 내부 실행)
+ * 10px 단위로 아주 부드럽게 이동합니다.
+ * @param {import('playwright').Page} page 
+ * @param {Object} options
+ * @param {string} options.speed - 'slow' | 'normal' | 'fast'
+ */
+async function smoothScrollUp(page, { speed = 'normal' } = {}) {
+  // 브라우저 컨텍스트에서 스크롤 실행
+  await page.evaluate(async ({ speed }) => {
+    console.log('[Browser] Starting smoothScrollUp...');
+    const scrollStep = 10; // 10px 단위
+    const delayTime = speed === 'slow' ? 50 : 30;
+
+    const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
+    let lastScrollY = -1;
+    let sameScrollCount = 0;
+    const maxSameScroll = 20;
+
+    while (true) {
+      const currentScroll = window.scrollY;
+      console.log(`[Browser] Scroll Up: ${currentScroll}`);
+
+      if (currentScroll <= 0) {
+        window.scrollTo(0, 0);
+        console.log('[Browser] Reached top.');
+        break;
+      }
+
+      // 스크롤 실행
+      window.scrollBy(0, -scrollStep);
+      await delay(delayTime);
+
+      // 멈춤 감지
+      if (window.scrollY === lastScrollY) {
+        sameScrollCount++;
+        if (sameScrollCount > maxSameScroll) {
+          console.log('[Browser] Stuck detected during up scroll. Forcing top.');
+          window.scrollTo(0, 0);
+          break;
+        }
+      } else {
+        sameScrollCount = 0;
+      }
+      lastScrollY = window.scrollY;
+    }
+  }, { speed });
+
   await wait(500);
 }
 
@@ -161,7 +288,8 @@ async function interactiveScrollDown(page, maxClicks) {
   const viewportHeight = await page.evaluate(() => window.innerHeight);
 
   let currentPosition = 0;
-  const stepSize = viewportHeight * 0.8; // 뷰포트의 80%씩 이동하여 놓치는 요소 최소화
+  // 인터랙션 단계는 50px 단위로 이동 (10px보다는 빠르지만 촘촘하게)
+  const stepSize = 50;
 
   // 이미 상호작용한 요소들을 추적하기 위한 Set (selector나 위치 기반)
   // 하지만 DOM이 변하므로 간단히 현재 뷰포트 내 요소만 처리
@@ -187,16 +315,14 @@ async function interactiveScrollDown(page, maxClicks) {
     const horizontalSteps = await processHorizontalScrolls(page);
     steps.push(...horizontalSteps);
 
-    // 2. 스크롤 이동
+    // 2. 스크롤 이동 (smooth 제거하여 즉시 이동)
     currentPosition += stepSize;
     await page.evaluate((pos) => {
-      window.scrollTo({
-        top: pos,
-        behavior: 'smooth'
-      });
+      window.scrollTo(0, pos); // smooth 제거
     }, currentPosition);
 
-    await wait(300); // 스크롤 후 렌더링 및 안정화 대기
+    // 스크롤이 잦아졌으므로 대기 시간은 짧게
+    await wait(100);
 
     // 페이지 높이 갱신 확인
     const newHeight = await page.evaluate(() => document.body.scrollHeight);
