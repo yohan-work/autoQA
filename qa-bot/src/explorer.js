@@ -183,6 +183,10 @@ async function interactiveScrollDown(page, maxClicks) {
       clickCount += clickSteps.length;
     }
 
+    // 1-3. 가로 스크롤 요소 처리
+    const horizontalSteps = await processHorizontalScrolls(page);
+    steps.push(...horizontalSteps);
+
     // 2. 스크롤 이동
     currentPosition += stepSize;
     await page.evaluate((pos) => {
@@ -197,6 +201,82 @@ async function interactiveScrollDown(page, maxClicks) {
     // 페이지 높이 갱신 확인
     const newHeight = await page.evaluate(() => document.body.scrollHeight);
     if (currentPosition >= newHeight) break;
+  }
+
+  return steps;
+}
+
+/**
+ * 현재 뷰포트 내의 가로 스크롤 가능한 요소를 찾아 스크롤합니다.
+ * @param {import('playwright').Page} page 
+ */
+async function processHorizontalScrolls(page) {
+  const steps = [];
+
+  try {
+    // 가로 스크롤이 가능한 요소 찾기 및 스크롤 실행
+    const scrolledCount = await page.evaluate(async () => {
+      let count = 0;
+      // 셀렉터 확장 및 구체화
+      const elements = document.querySelectorAll('div, ul, nav, section, article, [class*="filter"], [class*="nav"]');
+
+      console.log(`[Horizontal] Checking ${elements.length} elements for horizontal scroll...`);
+
+      for (const el of elements) {
+        if (el.dataset.qaScrolled) continue;
+
+        // 1. Scroll Width 체크
+        const isScrollableWidth = el.scrollWidth > el.clientWidth + 5; // 5px로 완화
+
+        // 2. Style 체크 (overflow-x)
+        const style = window.getComputedStyle(el);
+        const isScrollableStyle = ['auto', 'scroll'].includes(style.overflowX);
+
+        // 조건: 내용이 넘치거나, 스타일이 스크롤 가능하게 설정되어 있고 실제로 조금이라도 넘칠 때
+        if (isScrollableWidth || (isScrollableStyle && el.scrollWidth > el.clientWidth)) {
+
+          // 화면에 보이는지 확인
+          const rect = el.getBoundingClientRect();
+          // 높이가 0이 아니고, 화면 내에 조금이라도 들어와 있으면
+          const isVisible = rect.height > 0 &&
+            rect.top < window.innerHeight && rect.bottom > 0;
+
+          if (isVisible) {
+            console.log(`[Horizontal] Found scrollable element: ${el.tagName} .${el.className}`);
+
+            // 스크롤 실행
+            const originalLeft = el.scrollLeft;
+
+            // 오른쪽으로 이동
+            el.scrollBy({ left: 200, behavior: 'smooth' });
+            await new Promise(r => setTimeout(r, 500)); // 시간 늘림
+
+            // 이동했는지 확인 (실제로 스크롤이 되었는지)
+            if (el.scrollLeft === originalLeft) {
+              console.log(`[Horizontal] Element did not scroll. Skipping.`);
+              continue;
+            }
+
+            // 다시 원복
+            el.scrollBy({ left: -200, behavior: 'smooth' });
+            await new Promise(r => setTimeout(r, 500));
+
+            el.dataset.qaScrolled = 'true';
+            count++;
+          }
+        }
+      }
+      return count;
+    });
+
+    if (scrolledCount > 0) {
+      console.log(`    [Horizontal] ${scrolledCount}개 요소 가로 스크롤 완료`);
+      steps.push({ type: 'horizontal-scroll', count: scrolledCount });
+      await wait(500);
+    }
+
+  } catch (e) {
+    console.log(`    [Horizontal] 스크롤 처리 중 오류: ${e.message}`);
   }
 
   return steps;
