@@ -246,8 +246,46 @@ async function smoothScrollUp(page, { speed = 'normal' } = {}) {
       const currentScroll = window.scrollY;
       console.log(`[Browser] Scroll Up: ${currentScroll}`);
 
+      // Window 스크롤이 0이면, 내부 컨테이너 스크롤 확인
       if (currentScroll <= 0) {
         window.scrollTo(0, 0);
+
+        // 컨테이너 찾기 (Down 로직과 동일)
+        console.log('[Browser] Window at top. Checking for scrollable container to scroll up...');
+        const allElements = document.querySelectorAll('*');
+        let maxScrollable = null;
+        let maxScrollHeight = 0;
+
+        for (const el of allElements) {
+          const style = window.getComputedStyle(el);
+          if (['scroll', 'auto'].includes(style.overflowY)) {
+            if (el.scrollHeight > el.clientHeight) {
+              if (el.scrollHeight > maxScrollHeight) {
+                maxScrollHeight = el.scrollHeight;
+                maxScrollable = el;
+              }
+            }
+          }
+        }
+
+        if (maxScrollable && maxScrollable.scrollTop > 0) {
+          console.log(`[Browser] Found scrollable container to scroll up: ${maxScrollable.tagName} .${maxScrollable.className}`);
+
+          let elementCurrent = maxScrollable.scrollTop;
+          while (elementCurrent > 0) {
+            maxScrollable.scrollBy(0, -scrollStep);
+            await delay(delayTime);
+            elementCurrent = maxScrollable.scrollTop;
+
+            if (maxScrollable.scrollTop === elementCurrent && elementCurrent > 0) {
+              // Stuck?
+            }
+          }
+          console.log('[Browser] Container scroll up finished.');
+        } else {
+          console.log('[Browser] No scrollable container found or already at top.');
+        }
+
         console.log('[Browser] Reached top.');
         break;
       }
@@ -262,7 +300,13 @@ async function smoothScrollUp(page, { speed = 'normal' } = {}) {
         if (sameScrollCount > maxSameScroll) {
           console.log('[Browser] Stuck detected during up scroll. Forcing top.');
           window.scrollTo(0, 0);
-          break;
+          // 여기서 break 하지 않고 컨테이너 체크로 넘어갈 수도 있지만, 
+          // 일단 window가 stuck이면 컨테이너 체크 로직이 위에서 실행되므로 
+          // 다음 루프에서 currentScroll <= 0 조건에 걸리게 유도하거나
+          // 바로 컨테이너 체크를 수행해야 함.
+          // 여기서는 break 하고 다음 호출이나 로직에 맡기기보다, 바로 위 컨테이너 체크 로직을 함수로 분리하면 좋겠지만
+          // 인라인으로 처리하기 위해 continue 사용
+          continue;
         }
       } else {
         sameScrollCount = 0;
