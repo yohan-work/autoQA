@@ -3,9 +3,7 @@
  *
  * 이 모듈은 페이지에서 자동으로 상호작용을 수행합니다:
  * - 뷰포트 리사이즈
- * - 스크롤
- * - 입력 필드에 텍스트 입력
- * - 버튼/링크 클릭
+ * - 2단계 스크롤 및 상호작용 (단순 스크롤 -> 스크롤 & 클릭/입력)
  */
 
 const path = require("path");
@@ -14,11 +12,11 @@ const path = require("path");
 const DEFAULT_VIEWPORT = [{ width: 1280, height: 720, label: "default" }];
 
 // 위험한 텍스트 패턴 (클릭 시 스킵)
-const DANGEROUS_PATTERNS = ["delete", "탈퇴", "삭제"];
+const DANGEROUS_PATTERNS = ["delete", "탈퇴", "삭제", "logout", "signout", "로그아웃"];
 
 /**
  * 페이지 탐색 메인 함수
- * 뷰포트별로 스크롤, 타이핑, 클릭을 수행합니다.
+ * 뷰포트별로 2단계 탐색(스크롤 -> 인터랙션)을 수행합니다.
  *
  * @param {import('playwright').Page} page - Playwright 페이지 객체
  * @param {Object} options - 옵션
@@ -48,7 +46,7 @@ async function explorePage(page, { target, screenshotsDir }) {
 
       // 1. 뷰포트 크기 변경
       await page.setViewportSize({ width, height });
-      await wait(50); // 렌더링 대기 (최적화: 500ms → 100ms → 50ms)
+      await wait(100);
 
       steps.push({ type: "viewport", width, height, label });
 
@@ -59,24 +57,16 @@ async function explorePage(page, { target, screenshotsDir }) {
       );
       await safeScreenshot(page, viewportScreenshot, errors);
 
-      // 3. 스크롤 테스트
-      const scrollSteps = await scrollPage(page);
-      steps.push(...scrollSteps);
+      // 3. 2단계 스크롤 및 상호작용 수행
+      const interactionSteps = await performPhasedScrollAndInteract(page, maxClicks);
+      steps.push(...interactionSteps);
 
-      // 4. 스크롤 후 스크린샷
-      const afterScrollScreenshot = path.join(
+      // 4. 탐색 완료 후 스크린샷
+      const afterExploreScreenshot = path.join(
         screenshotsDir,
-        `after-scroll-${i}_${label}.png`
+        `after-explore-${i}_${label}.png`
       );
-      await safeScreenshot(page, afterScrollScreenshot, errors);
-
-      // 5. 입력 필드에 타이핑 (성능 최적화를 위해 제거)
-      // const typeSteps = await typeIntoInputs(page);
-      // steps.push(...typeSteps);
-
-      // 6. 버튼/링크 클릭
-      const clickSteps = await clickButtons(page, maxClicks);
-      steps.push(...clickSteps);
+      await safeScreenshot(page, afterExploreScreenshot, errors);
     }
   } catch (error) {
     // 전체 탐색 중 예상치 못한 에러
@@ -88,239 +78,219 @@ async function explorePage(page, { target, screenshotsDir }) {
 }
 
 /**
- * 페이지를 자연스럽게 스크롤합니다.
- * smooth scroll behavior를 사용하여 부드럽게 이동합니다.
+ * 2단계 스크롤 및 상호작용을 수행합니다.
+ * Phase 1: 천천히 스크롤 다운 (페이지 로딩 유도) -> 최상단 이동
+ * Phase 2: 천천히 스크롤 다운하면서 보이는 요소들과 상호작용
  *
- * @param {import('playwright').Page} page - Playwright 페이지 객체
- * @returns {Promise<Array>} 스크롤 스텝 배열
+ * @param {import('playwright').Page} page
+ * @param {number} maxClicks
  */
-async function scrollPage(page) {
+async function performPhasedScrollAndInteract(page, maxClicks) {
   const steps = [];
-
+  
   try {
-    // 전체 스크롤 높이 가져오기
-    const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
-    const scrollSteps = 20; // 20단계로 부드럽게 스크롤
+    // === Phase 1: 단순 스크롤 다운 ===
+    console.log("    [Phase 1] 페이지 로딩을 위한 스크롤 다운...");
+    await smoothScrollDown(page, { speed: 'slow' });
+    
+    // 최상단으로 이동
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await wait(500);
+    steps.push({ type: "phase-1-complete" });
 
-    // 1. 위에서 아래로 smooth 스크롤
-    for (let i = 0; i <= scrollSteps; i++) {
-      const position = Math.floor((scrollHeight / scrollSteps) * i);
-      await page.evaluate((pos) => {
-        window.scrollTo({
-          top: pos,
-          behavior: "smooth",
-        });
-      }, position);
-      await wait(100); // smooth 스크롤이 완료될 시간
-
-      steps.push({ type: "scroll-down", position });
-    }
-
-    // 하단에서 잠시 대기
-    await wait(300);
-
-    // 2. 아래에서 위로 smooth 스크롤
-    for (let i = scrollSteps; i >= 0; i--) {
-      const position = Math.floor((scrollHeight / scrollSteps) * i);
-      await page.evaluate((pos) => {
-        window.scrollTo({
-          top: pos,
-          behavior: "smooth",
-        });
-      }, position);
-      await wait(100); // smooth 스크롤이 완료될 시간
-
-      steps.push({ type: "scroll-up", position });
-    }
-
-    // 최종적으로 맨 위에 위치
-    await wait(100);
+    // === Phase 2: 인터랙티브 스크롤 다운 ===
+    console.log("    [Phase 2] 상호작용 스크롤 시작...");
+    const interactSteps = await interactiveScrollDown(page, maxClicks);
+    steps.push(...interactSteps);
+    
   } catch (error) {
-    steps.push({ type: "scroll-error", error: error.message });
+    steps.push({ type: "error", message: error.message });
+    console.error(`    [ERROR] Phase 실행 중 오류: ${error.message}`);
   }
 
   return steps;
 }
 
 /**
- * 페이지의 입력 필드에 텍스트를 입력합니다.
- * 성능 최적화를 위해 첫 3개 입력 필드만 테스트합니다.
- *
- * @param {import('playwright').Page} page - Playwright 페이지 객체
- * @returns {Promise<Array>} 타이핑 스텝 배열
+ * 부드럽게 페이지 끝까지 스크롤합니다.
+ * @param {import('playwright').Page} page 
+ * @param {Object} options
+ * @param {string} options.speed - 'slow' | 'normal' | 'fast'
  */
-async function typeIntoInputs(page) {
-  const steps = [];
-  const MAX_INPUTS_TO_TEST = 3; // 최적화: 첫 3개만 테스트
+async function smoothScrollDown(page, { speed = 'normal' } = {}) {
+  const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
+  const viewportHeight = await page.evaluate(() => window.innerHeight);
+  
+  let currentPosition = 0;
+  const stepSize = viewportHeight / 2; // 뷰포트 절반씩 이동
+  const delay = speed === 'slow' ? 200 : 100;
 
-  // 대상 입력 필드 셀렉터
-  const selector = [
-    'input[type="text"]',
-    'input[type="email"]',
-    'input[type="search"]',
-    "textarea",
-    "input:not([type])",
-  ].join(", ");
-
-  try {
-    // 모든 입력 필드 찾기
-    const inputs = await page.locator(selector).all();
-    let testedCount = 0;
-
-    for (
-      let i = 0;
-      i < inputs.length && testedCount < MAX_INPUTS_TO_TEST;
-      i++
-    ) {
-      const input = inputs[i];
-
-      try {
-        // 요소가 보이는지 확인
-        if (!(await input.isVisible())) {
-          continue;
-        }
-
-        // 스크롤하여 요소가 보이도록
-        await input.scrollIntoViewIfNeeded();
-        await wait(50); // 최적화: 200ms → 50ms
-
-        // 클릭하여 포커스
-        await input.click();
-        await wait(50); // 최적화: 100ms → 50ms
-
-        // 텍스트 입력
-        await input.fill(`test-input-${i}`);
-        await wait(50); // 최적화: 200ms → 50ms
-
-        steps.push({ type: "type", index: i });
-        testedCount++;
-      } catch (inputError) {
-        steps.push({
-          type: "type-error",
-          index: i,
-          error: inputError.message,
-        });
-      }
+  while (currentPosition < scrollHeight) {
+    currentPosition += stepSize;
+    await page.evaluate((pos) => {
+      window.scrollTo({
+        top: pos,
+        behavior: 'smooth'
+      });
+    }, currentPosition);
+    
+    // 페이지 높이가 동적으로 변할 수 있으므로 갱신
+    const newScrollHeight = await page.evaluate(() => document.body.scrollHeight);
+    if (newScrollHeight > scrollHeight) {
+      // 무한 스크롤 등 대응 로직이 필요할 수 있으나 여기서는 간단히 처리
     }
-  } catch (error) {
-    steps.push({ type: "type-error", index: -1, error: error.message });
+    
+    await wait(delay);
   }
-
-  return steps;
+  
+  // 확실하게 끝까지
+  await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }));
+  await wait(500);
 }
 
 /**
- * 페이지의 버튼과 링크를 클릭합니다.
- * 위험한 텍스트가 포함된 요소는 건너뜁니다.
- * 클릭 후 팝업이 열리면 자동으로 닫습니다.
- *
- * @param {import('playwright').Page} page - Playwright 페이지 객체
- * @param {number} maxClicks - 최대 클릭 횟수
- * @returns {Promise<Array>} 클릭 스텝 배열
+ * 스크롤하면서 보이는 요소들과 상호작용합니다.
+ * @param {import('playwright').Page} page 
+ * @param {number} maxClicks 
  */
-async function clickButtons(page, maxClicks = 20) {
+async function interactiveScrollDown(page, maxClicks) {
   const steps = [];
+  let clickCount = 0;
+  let inputCount = 0;
+  
+  const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
+  const viewportHeight = await page.evaluate(() => window.innerHeight);
+  
+  let currentPosition = 0;
+  const stepSize = viewportHeight * 0.8; // 뷰포트의 80%씩 이동하여 놓치는 요소 최소화
 
-  // 클릭 대상 셀렉터
-  const selector = 'button, a[href], [role="button"]';
-
-  try {
-    // 모든 클릭 가능한 요소 찾기
-    const elements = await page.locator(selector).all();
-
-    let clickCount = 0;
-
-    for (let i = 0; i < elements.length && clickCount < maxClicks; i++) {
-      const element = elements[i];
-
-      try {
-        // 요소가 보이는지 확인
-        if (!(await element.isVisible())) {
-          continue;
-        }
-
-        // 태그명과 텍스트 추출
-        let tagName = "";
-        let text = "";
-
-        try {
-          tagName = await element.evaluate((el) => el.tagName.toLowerCase());
-          text = await element.innerText();
-          text = text.trim().substring(0, 50); // 50자로 제한
-        } catch {
-          // 추출 실패 시 무시
-        }
-
-        // 위험한 텍스트 체크
-        const lowerText = text.toLowerCase();
-        const isDangerous = DANGEROUS_PATTERNS.some((pattern) =>
-          lowerText.includes(pattern.toLowerCase())
-        );
-
-        if (isDangerous) {
-          steps.push({
-            type: "skip-click",
-            index: i,
-            reason: "dangerous-text",
-            text,
-          });
-          continue;
-        }
-
-        // 스크롤하여 요소가 보이도록
-        await element.scrollIntoViewIfNeeded();
-        await wait(20);
-
-        // 클릭 실행
-        await element.click();
-        await wait(100); // 팝업 렌더링 대기
-
-        // 팝업/모달 자동 닫기: ESC 키만 (빠르게)
-        await page.keyboard.press("Escape");
-        await wait(50);
-
-        steps.push({ type: "click", index: i, tagName, text });
-        clickCount++;
-      } catch (clickError) {
-        steps.push({
-          type: "click-error",
-          index: i,
-          error: clickError.message,
-        });
-      }
+  // 이미 상호작용한 요소들을 추적하기 위한 Set (selector나 위치 기반)
+  // 하지만 DOM이 변하므로 간단히 현재 뷰포트 내 요소만 처리
+  
+  while (currentPosition < scrollHeight) {
+    // 1. 현재 뷰포트에서 상호작용 수행
+    
+    // 1-1. Input 요소 처리
+    if (inputCount < 5) { // 최대 5개까지만 입력 테스트
+      const inputSteps = await processVisibleInputs(page, inputCount);
+      steps.push(...inputSteps);
+      inputCount += inputSteps.length;
     }
-  } catch (error) {
-    steps.push({ type: "click-error", index: -1, error: error.message });
-  }
 
+    // 1-2. 클릭 요소 처리
+    if (clickCount < maxClicks) {
+      const clickSteps = await processVisibleClickables(page, maxClicks - clickCount);
+      steps.push(...clickSteps);
+      clickCount += clickSteps.length;
+    }
+
+    // 2. 스크롤 이동
+    currentPosition += stepSize;
+    await page.evaluate((pos) => {
+      window.scrollTo({
+        top: pos,
+        behavior: 'smooth'
+      });
+    }, currentPosition);
+    
+    await wait(300); // 스크롤 후 렌더링 및 안정화 대기
+    
+    // 페이지 높이 갱신 확인
+    const newHeight = await page.evaluate(() => document.body.scrollHeight);
+    if (currentPosition >= newHeight) break;
+  }
+  
   return steps;
 }
 
-/**
- * 열려있는 팝업/모달을 닫습니다.
- * ESC 키를 사용하여 빠르게 닫습니다. (timeout 없이 즉시 실행)
- *
- * @param {import('playwright').Page} page - Playwright 페이지 객체
- */
-async function closePopupIfOpen(page) {
-  // ESC 키만 사용 - 가장 빠르고 효과적
-  await page.keyboard.press("Escape");
-  await wait(50);
+async function processVisibleInputs(page, startIndex) {
+  const steps = [];
+  // 현재 뷰포트에 보이는 input만 선택
+  const inputs = await page.locator('input:visible, textarea:visible').all();
+  
+  for (const input of inputs) {
+    try {
+      // 이미 값이 있는지 확인 (간단한 체크)
+      const value = await input.inputValue();
+      if (value) continue;
+
+      // 화면에 확실히 보이는지 체크 (중앙 좌표 등)
+      // Playwright의 isVisible은 DOM 존재 여부 + 스타일 체크이므로 
+      // 뷰포트 내 존재 여부는 scrollIntoViewIfNeeded가 처리해주지만,
+      // 우리는 스크롤하면서 지나가는 중이므로 현재 보이는 것만 건드리는게 좋음.
+      // 여기서는 간단히 try-catch로 진행
+      
+      const type = await input.getAttribute('type') || 'text';
+      if (['hidden', 'submit', 'button', 'image', 'checkbox', 'radio'].includes(type)) continue;
+
+      await input.click({ timeout: 1000 });
+      await input.fill('QA Test');
+      steps.push({ type: 'input', inputType: type });
+      
+      // 하나 처리하고 잠시 대기
+      await wait(50);
+    } catch (e) {
+      // 무시
+    }
+  }
+  return steps;
+}
+
+async function processVisibleClickables(page, remainingClicks) {
+  const steps = [];
+  let clicked = 0;
+  
+  // 현재 뷰포트에 보이는 클릭 가능한 요소들
+  // 버튼, 링크, role=button
+  const selector = 'button:visible, a[href]:visible, [role="button"]:visible';
+  const elements = await page.locator(selector).all();
+  
+  for (const element of elements) {
+    if (clicked >= remainingClicks) break;
+    
+    try {
+      const text = (await element.innerText()).trim();
+      if (!text) continue;
+      
+      // 위험한 텍스트 체크
+      if (DANGEROUS_PATTERNS.some(p => text.toLowerCase().includes(p))) continue;
+      
+      // 화면 내에 있는지 대략적 확인 (BoundingBox)
+      const box = await element.boundingBox();
+      if (!box) continue;
+      
+      // 뷰포트 내에 있는지 확인 (스크롤 위치 고려 안해도 boundingBox는 뷰포트 기준? 아님 페이지 기준? 
+      // Playwright boundingBox는 페이지 기준.
+      // 하지만 우리는 interactiveScrollDown에서 스크롤을 제어하고 있음.
+      // 그냥 click() 시도하면 Playwright가 알아서 스크롤하려 할 것임.
+      // 여기서는 "보이는 것"을 클릭하는게 목표이므로 force: true를 쓰거나
+      // 현재 스크롤 위치와 비교해야 함. 
+      // 복잡도를 줄이기 위해 그냥 시도.
+      
+      await element.click({ timeout: 1000 });
+      clicked++;
+      steps.push({ type: 'click', text: text.substring(0, 20) });
+      
+      // 팝업 닫기 시도
+      await page.keyboard.press('Escape');
+      await wait(100);
+      
+    } catch (e) {
+      // 클릭 실패는 무시 (가려져 있거나 등등)
+    }
+  }
+  
+  return steps;
 }
 
 /**
  * 안전하게 스크린샷을 촬영합니다.
- * 전체 페이지를 캡처하며, 실패 시 에러 배열에 추가합니다.
- *
- * @param {import('playwright').Page} page - Playwright 페이지 객체
- * @param {string} filepath - 저장 경로
- * @param {Array} errors - 에러 배열
  */
 async function safeScreenshot(page, filepath, errors) {
   try {
     await page.screenshot({
       path: filepath,
-      fullPage: true, // 전체 페이지 캡처 (스크롤 가능한 전체 영역)
+      fullPage: true,
     });
   } catch (error) {
     errors.push(`스크린샷 실패 (${filepath}): ${error.message}`);
@@ -329,9 +299,6 @@ async function safeScreenshot(page, filepath, errors) {
 
 /**
  * 지정된 시간만큼 대기합니다.
- *
- * @param {number} ms - 대기 시간 (밀리초)
- * @returns {Promise<void>}
  */
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
