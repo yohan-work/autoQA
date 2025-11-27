@@ -289,8 +289,8 @@ async function processVisibleClickables(page, remainingClicks) {
  * @param {import('playwright').Page} page 
  */
 async function handlePotentialPopup(page) {
-  // 팝업 렌더링 대기
-  await wait(300);
+  // 팝업 렌더링 및 사용자 확인을 위한 대기 (2.5초)
+  await wait(2500);
 
   // 닫기 버튼으로 추정되는 셀렉터들
   const closeSelectors = [
