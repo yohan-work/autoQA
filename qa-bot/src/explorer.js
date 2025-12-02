@@ -116,7 +116,6 @@ async function performPhasedScrollAndInteract(page, maxClicks) {
 
 /**
  * 부드럽게 페이지 끝까지 스크롤합니다. (브라우저 내부 실행)
- * 10px 단위로 아주 부드럽게 이동합니다.
  * @param {import('playwright').Page} page 
  * @param {Object} options
  * @param {string} options.speed - 'slow' | 'normal' | 'fast'
@@ -224,7 +223,6 @@ async function smoothScrollDown(page, { speed = 'normal' } = {}) {
 
 /**
  * 부드럽게 페이지 맨 위로 스크롤합니다. (브라우저 내부 실행)
- * 10px 단위로 아주 부드럽게 이동합니다.
  * @param {import('playwright').Page} page 
  * @param {Object} options
  * @param {string} options.speed - 'slow' | 'normal' | 'fast'
@@ -374,8 +372,8 @@ async function interactiveScrollDown(page, maxClicks) {
   console.log(`[Interactive] Scroll Mode: ${scrollInfo.mode} (Height: ${scrollInfo.scrollHeight})`);
 
   let currentPosition = 0;
-  // 인터랙션 단계는 50px 단위로 이동 (10px보다는 빠르지만 촘촘하게)
-  const stepSize = 50;
+  // 인터랙션 단계는 20px 단위로 이동 (천천히)
+  const stepSize = 20;
 
   // 이미 상호작용한 요소들을 추적하기 위한 Set (selector나 위치 기반)
   // 하지만 DOM이 변하므로 간단히 현재 뷰포트 내 요소만 처리
@@ -610,12 +608,20 @@ async function handlePotentialPopup(page) {
     'button:has-text("X")',
   ];
 
+  const dimmedSelectors = [
+    '.modal-backdrop',
+    '.dimmed',
+    '.overlay',
+    '.popup-mask',
+    '[class*="backdrop"]',
+    '[class*="dimmed"]',
+    '[class*="mask"]',
+    '[class*="overlay"]'
+  ];
+
   try {
     // 1. 명시적인 닫기 버튼 찾기
     // 현재 뷰포트 내에 있고, visible한 닫기 버튼을 찾음
-    // 여러 개가 있을 수 있으므로 가장 위에 있거나(z-index) 가장 마지막에 렌더링된 것을 찾는게 좋지만,
-    // Playwright의 locator는 기본적으로 strict 모드이므로 .first() 등을 사용해야 함.
-
     for (const selector of closeSelectors) {
       const closeBtn = page.locator(`${selector}:visible`).first();
 
@@ -626,12 +632,31 @@ async function handlePotentialPopup(page) {
         return; // 성공적으로 닫았으면 종료
       }
     }
+
+    // 2. Dimmed 영역 클릭 시도
+    for (const selector of dimmedSelectors) {
+      // dimmed는 보통 화면 전체를 덮으므로 visible 체크
+      const dimmed = page.locator(`${selector}:visible`).first();
+      if (await dimmed.count() > 0) {
+        console.log(`    [Popup] Dimmed 영역 발견: ${selector}`);
+        // 중앙 클릭 시 팝업 컨텐츠를 클릭할 수도 있으므로, 
+        // 보통 dimmed는 z-index가 팝업보다 낮지만, 클릭 이벤트가 전달되려면 
+        // 팝업 밖을 클릭해야 함. 
+        // Playwright click은 요소의 중앙을 클릭함.
+        // Dimmed 요소가 전체 화면이라면 (0,0)이나 구석을 클릭하는게 안전할 수 있음.
+        // 하지만 여기서는 force: true로 해당 요소 클릭 시도
+        await dimmed.click({ position: { x: 10, y: 10 }, force: true, timeout: 1000 });
+        await wait(200);
+        return;
+      }
+    }
+
   } catch (e) {
-    // 닫기 버튼 클릭 실패 시 무시하고 ESC 시도
-    console.log(`    [Popup] 닫기 버튼 클릭 실패: ${e.message}`);
+    // 클릭 실패 시 무시하고 ESC 시도
+    console.log(`    [Popup] 닫기/Dimmed 클릭 실패: ${e.message}`);
   }
 
-  // 2. Fallback: ESC 키
+  // 3. Fallback: ESC 키
   await page.keyboard.press('Escape');
   await wait(100);
 }
